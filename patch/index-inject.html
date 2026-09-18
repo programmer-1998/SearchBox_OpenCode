@@ -1,0 +1,1296 @@
+<style id="rtl-bidi-fix" data-from="opencode-rtl-patch">
+    /* RTL/bidi fix: let each paragraph pick its own base direction. */
+    [data-component="prompt-input"],
+    [data-slot="user-message-text"],
+    [data-slot="text-part-body"],
+    [data-component="text-part"],
+    [data-slot="tab-title"],
+    [data-slot="terminal-tab-title"] {
+      unicode-bidi: plaintext;
+      text-align: start;
+    }
+  </style>
+  <script id="rtl-bidi-fix" data-from="opencode-rtl-patch">
+    (function () {
+      function apply() {
+        var nodes = document.querySelectorAll('[data-component="prompt-input"]');
+        for (var i = 0; i < nodes.length; i++) {
+          var el = nodes[i];
+          if (el.getAttribute("dir") === null) el.setAttribute("dir", "auto");
+        }
+      }
+      apply();
+      new MutationObserver(apply).observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+    })();
+  </script>
+<script id="oc-find-chat" data-from="opencode-find-chat-patch">
+(function () {
+  "use strict";
+  if (window.__ocFindChatInstalled) return;
+  window.__ocFindChatInstalled = true;
+
+  var css = [
+    "#oc-find-chat-box{box-sizing:border-box;position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:6px;height:30px;max-width:380px;min-width:180px;width:min(100%,380px);padding:0 6px 0 10px;border-radius:8px;border:1px solid var(--border-weaker-base,rgba(120,120,128,0.35));background:color-mix(in srgb,var(--surface-raised-stronger-non-alpha,rgba(28,28,34,0.94)) 85%,transparent);box-shadow:0 4px 14px rgba(0,0,0,0.2);backdrop-filter:blur(1px);font-family:inherit}",
+    "#oc-find-chat-box input{flex:1 1 auto;min-width:0;background:transparent;border:0;outline:0;color:var(--text-strong,#e8e8ea);font:inherit;font-size:12.5px;line-height:1;padding:0}",
+    "#oc-find-chat-box input::placeholder{color:var(--text-weak,#8a8a90)}",
+    "#oc-find-chat-count{flex:0 0 auto;font-size:11px;color:var(--text-weak,#8a8a90);min-width:34px;text-align:right;font-variant-numeric:tabular-nums}",
+    "#oc-find-chat-msg{flex:0 0 auto;font-size:11px;color:#e5484d;white-space:nowrap;font-family:inherit}",
+    "#oc-find-chat-nav{display:flex;align-items:center;gap:2px}",
+    "#oc-find-chat-nav button{display:flex;align-items:center;justify-content:center;width:24px;height:24px;border:0;border-radius:6px;background:transparent;color:var(--text-weak,#8a8a90);cursor:pointer;font-size:11px;padding:0;line-height:1}",
+    "#oc-find-chat-nav button:hover{background:color-mix(in srgb,var(--surface-base-active,#2c2c32) 60%,transparent);color:var(--text-strong,#e8e8ea)}",
+    "#oc-find-chat-nav button:disabled{opacity:0.35;cursor:default}",
+    "#oc-find-chat-overlay{position:fixed;top:0;left:0;width:100vw;height:100vh;pointer-events:none;z-index:9999;overflow:hidden}",
+    ".ocf-mark-overlay{position:fixed;pointer-events:none;background:rgba(229,72,77,0.45);border-radius:2px;box-shadow:0 0 0 1px rgba(229,72,77,0.85),0 0 8px rgba(229,72,77,0.45)}",
+    ".ocf-mark-turn{position:fixed;pointer-events:none;background:rgba(229,72,77,0.14);border:1.5px dashed rgba(229,72,77,0.9);border-radius:6px;box-shadow:0 0 0 1px rgba(229,72,77,0.25),0 0 14px rgba(229,72,77,0.35)}",
+    "#oc-find-chip{position:fixed;pointer-events:none;z-index:9999;max-width:min(560px,calc(100vw - 24px));background:rgba(28,28,32,0.95);border:1px solid rgba(229,72,77,0.8);border-radius:8px;padding:8px 10px;color:#e8e8ea;font-size:12px;line-height:1.6;direction:rtl;text-align:right;box-shadow:0 4px 18px rgba(0,0,0,0.45);overflow:hidden;text-overflow:ellipsis}",
+    ".ocf-match{background:rgba(229,72,77,0.35);color:#ff7b80;border-radius:3px;box-shadow:0 0 0 1px rgba(229,72,77,0.8)}"
+  ].join("");
+
+  var style = document.createElement("style");
+  style.id = "oc-find-chat-style-injected";
+  style.textContent = css;
+
+  var box = document.createElement("div");
+  box.id = "oc-find-chat-box";
+  box.setAttribute("data-from", "opencode-find-chat-patch");
+  box.innerHTML =
+    '<input type="text" placeholder="Search in your prompts\u2026" autocomplete="off" spellcheck="false" dir="auto"/>' +
+    '<span id="oc-find-chat-count"></span>' +
+    '<span id="oc-find-chat-msg" style="display:none">No matches found</span>' +
+    '<span id="oc-find-chat-nav">' +
+    '<button type="button" data-act="prev" title="Previous (Shift+Enter)">&#9650;</button>' +
+    '<button type="button" data-act="next" title="Next (Enter)">&#9660;</button>' +
+    '<button type="button" data-act="clear" title="Clear search">&#10005;</button>' +
+    '</span>';
+
+  var input = box.querySelector("input");
+  var countEl = box.querySelector("#oc-find-chat-count");
+  var msgEl = box.querySelector("#oc-find-chat-msg");
+  var prevBtn = box.querySelector("[data-act='prev']");
+  var nextBtn = box.querySelector("[data-act='next']");
+  var clearBtn = box.querySelector("[data-act='clear']");
+  var hits = [];
+  var current = -1;
+  var navToken = 0;
+  var lastSearchHadApi = false;
+
+  /* ========== 1. Auth: prefer preload's awaitInitialization() ========== */
+  var apiOrigin = null;
+  var apiAuth = null;
+  var lastSessionId = null;
+  var origFetch = window.fetch ? window.fetch.bind(window) : null;
+
+  function tryPreload() {
+    var a = window.api;
+    if (!a || !a.awaitInitialization) return Promise.reject();
+    return a.awaitInitialization().then(function (s) {
+      if (s && s.url) {
+        apiOrigin = s.url.replace(/\/+$/, "");
+        apiAuth = "Basic " + btoa((s.username || "opencode") + ":" + s.password);
+      }
+    });
+  }
+
+  /* fallback: intercept fetch calls to capture origin + auth header */
+  function tryFetchIntercept() {
+    if (!origFetch) return;
+    window.fetch = function (input, init) {
+      try {
+        var u = typeof input === "string" ? input : (input && input.url) || "";
+        var m = u.match(/^(https?:\/\/127\.0\.0\.1|https?:\/\/localhost|https?:\/\/\[::1\]):\d+\//);
+        if (m && !apiOrigin) {
+          var hostEnd = u.indexOf("/", 8);
+          apiOrigin = hostEnd > 0 ? u.slice(0, hostEnd) : u;
+        }
+        if (m) {
+          var hdrs = init ? init.headers : null;
+          var a = null;
+          if (hdrs) {
+            if (typeof hdrs.get === "function") a = hdrs.get("Authorization");
+            else a = hdrs.Authorization || hdrs.authorization;
+          }
+          if (a) apiAuth = a;
+        }
+      } catch (e) {}
+      return origFetch(input, init);
+    };
+  }
+
+  /* ========== 2. Session detection (from live DOM, not URL) ========== */
+  var lastSidSource = null;
+  function sidFromHref(href) {
+    var m = String(href || "").match(/\/session\/([^\/\s?#]+)/);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  function sessionId() {
+    var sid = null, src = null;
+    var el = document.querySelector('[data-tab-key][data-active="true"]');
+    if (el) { sid = sidFromHref(el.getAttribute("data-tab-key") || ""); if (sid) src = "tab"; }
+    if (!sid && document.querySelector('a[aria-current="page"]')) {
+      sid = sidFromHref(document.querySelector('a[aria-current="page"]').getAttribute("href") || "");
+      if (sid) src = "link";
+    }
+    if (!sid) {
+      var sel = document.querySelector("[data-session-id][aria-current]") || document.querySelector("[data-session-id][data-active]");
+      if (sel) { sid = sel.getAttribute("data-session-id"); if (sid) src = "sidebar-sel"; }
+    }
+    if (!sid) {
+      var m = (window.location.pathname + window.location.hash).match(/(?:\/server\/[^/]+\/session|\/session)\/([^/?#]+)/);
+      if (m) { sid = decodeURIComponent(m[1]); src = "url"; }
+    }
+    if (sid) lastSidSource = src;
+    return sid;
+  }
+
+  /* ========== 3. Fetch helpers ========== */
+  function fetchJSON(url) {
+    if (!apiOrigin || !apiAuth) return Promise.reject(new Error("no-auth"));
+    var h = {};
+    h["Authorization"] = apiAuth;
+    return (origFetch || window.fetch)(url, { headers: h }).then(function (r) {
+      if (!r.ok) throw new Error("http " + r.status);
+      return r.json();
+    });
+  }
+
+  /* ========== 4. Full-text indexing ========== */
+  var indexCache = {};   // sessionId -> { msgs:[], builtAt:number }
+  var ordMap = null;     // messageId -> ordinal in chronological list
+
+  function partTextOld(p) {
+    if (!p) return "";
+    if (typeof p.content === "string") return p.content;
+    if (typeof p.text === "string") return p.text;
+    if (p.type === "tool" && typeof p.name === "string") return p.name;
+    return "";
+  }
+
+  function collectStrings(o, out) {
+    if (!o) return;
+    if (typeof o === "string") { if (o) out.push(o); return; }
+    if (Array.isArray(o)) { for (var i = 0; i < o.length; i++) collectStrings(o[i], out); return; }
+    if (typeof o === "object") {
+      for (var k in o) {
+        try { if (k === "sessionId") continue; collectStrings(o[k], out); } catch (e) {}
+      }
+    }
+  }
+
+  function extractText(msg) {
+    if (!msg) return "";
+    /* v2 model: User/Synthetic/System have .text directly */
+    if (typeof msg.text === "string" && msg.text) return msg.text;
+    /* v2 Assistant: content[] = [{type:'text', text},{type:'reasoning',text},{type:'tool',...}] */
+    if (Array.isArray(msg.content) && msg.content.length) {
+      var t = [], i, c, st;
+      for (i = 0; i < msg.content.length; i++) {
+        c = msg.content[i];
+        if (typeof c === "string") { t.push(c); continue; }
+        if (c.text) t.push(c.text);
+        else if (c.type === "tool") {
+          if (c.name) t.push(c.name);
+          st = [];
+          collectStrings(c.state === undefined || c.state === null ? c : c.state, st);
+          if (st.length) t.push(st.join("\n"));
+        }
+      }
+      if (t.length) return t.join("\n");
+    }
+    /* old model: message.parts[] */
+    if (Array.isArray(msg.parts) && msg.parts.length) {
+      var parts = [], j, st2;
+      for (j = 0; j < msg.parts.length; j++) {
+        var p = msg.parts[j];
+        var base = partTextOld(p);
+        if (base) parts.push(base);
+        if (p && p.type === "tool" && (p.state !== undefined || p.data !== undefined)) {
+          st2 = [];
+          collectStrings(p.state || p.data, st2);
+          if (st2.length) parts.push(st2.join("\n"));
+        }
+      }
+      return parts.join("\n");
+    }
+    /* Shell: command + output */
+    if (typeof msg.command === "string") return msg.command + "\n" + (msg.output || "");
+    /* any other .output string */
+    if (typeof msg.output === "string") return msg.output;
+    return "";
+  }
+
+  /* Durables: rebuild a full plain-text index from /api/session/:id/history events */
+  function fetchHistory(sid) {
+    var allEvents = [];
+    var after = 0;
+    function page() {
+      var url = apiOrigin + "/api/session/" + encodeURIComponent(sid) + "/history?limit=100&after=" + after;
+      return fetchJSON(url).then(function (res) {
+        if (!res || !Array.isArray(res.data) || !res.data.length) return;
+        allEvents = allEvents.concat(res.data);
+        if (res.hasMore) {
+          var last = res.data[res.data.length - 1];
+          var ls = last && last.seq;
+          if (ls === undefined && last && last.data) ls = last.data.seq;
+          if (typeof ls === "number" && ls + 1 > after) { after = ls + 1; return page(); }
+        }
+      });
+    }
+    return page().then(function () { return allEvents; });
+  }
+
+  function evData(evt) {
+    return (evt && typeof evt.data === "object" && evt.data) ? evt.data : (evt || {});
+  }
+
+  function rebuildIndex(events) {
+    var msgs = {};
+    var reason = {};
+    var seqById = {};
+    var order = 0;
+    function touch(id) { if (id && seqById[id] === undefined) seqById[id] = order++; }
+    var i, ev, d, t;
+    for (i = 0; i < events.length; i++) {
+      ev = events[i];
+      if (!ev) continue;
+      d = evData(ev);
+      t = ev.type || d.type || "";
+      if (t.startsWith("session.next.prompt")) {
+        touch(d.messageID);
+        var mu = msgs[d.messageID] || (msgs[d.messageID] = { role: "user", text: "" });
+        if (d.prompt && typeof d.prompt.text === "string") mu.text = d.prompt.text;
+      } else if (t === "session.next.synthetic") {
+        touch(d.messageID);
+        var m1 = msgs[d.messageID] || (msgs[d.messageID] = { role: "assistant", text: "" });
+        if (typeof d.text === "string") m1.text = m1.text ? m1.text + "\n" + d.text : d.text;
+      } else if (t === "session.next.text.delta") {
+        touch(d.assistantMessageID);
+        var ma = msgs[d.assistantMessageID] || (msgs[d.assistantMessageID] = { role: "assistant", text: "" });
+        if (typeof d.delta === "string") ma.text += d.delta;
+      } else if (t === "session.next.text.ended") {
+        touch(d.assistantMessageID);
+        var me = msgs[d.assistantMessageID] || (msgs[d.assistantMessageID] = { role: "assistant", text: "" });
+        if (typeof d.text === "string") me.text = d.text;
+      } else if (t.startsWith("session.next.text.")) {
+        touch(d.assistantMessageID);
+        msgs[d.assistantMessageID] = msgs[d.assistantMessageID] || { role: "assistant", text: "" };
+      } else if (t === "session.next.reasoning.delta") {
+        touch(d.assistantMessageID);
+        msgs[d.assistantMessageID] = msgs[d.assistantMessageID] || { role: "assistant", text: "" };
+        reason[d.assistantMessageID] = (reason[d.assistantMessageID] || "") + (typeof d.delta === "string" ? d.delta : "");
+      } else if (t === "session.next.reasoning.ended") {
+        touch(d.assistantMessageID);
+        msgs[d.assistantMessageID] = msgs[d.assistantMessageID] || { role: "assistant", text: "" };
+        if (typeof d.text === "string") reason[d.assistantMessageID] = d.text;
+      } else if (t.startsWith("session.next.reasoning.")) {
+        touch(d.assistantMessageID);
+        msgs[d.assistantMessageID] = msgs[d.assistantMessageID] || { role: "assistant", text: "" };
+      }
+    }
+    var ids = [];
+    for (var k in msgs) ids.push(k);
+    ids.sort(function (a, b) { return (seqById[a] || 0) - (seqById[b] || 0); });
+    var list = [];
+    for (var j = 0; j < ids.length; j++) {
+      var id = ids[j];
+      var m = msgs[id];
+      var text = m.text || "";
+      var rc = reason[id];
+      if (rc) text = text ? text + "\n" + rc : rc;
+      if (!text) continue;
+      list.push({ id: id, role: m.role, text: text, navId: id });
+    }
+    return list;
+  }
+
+  /* PRIMARY source: v1 REST endpoint that reads the populated message/part tables.
+     GET /session/:id/message (no ?limit) returns the ENTIRE conversation as
+     [{ info:{id,role,...}, parts:[{type:'text'|'reasoning'|'tool', text?}, ...] }, ...]. */
+  function fetchV1Messages(sid) {
+    var url = apiOrigin + "/session/" + encodeURIComponent(sid) + "/message";
+    return fetchJSON(url).then(function (res) {
+      if (Array.isArray(res)) return res;
+      if (res && Array.isArray(res.data)) return res.data;
+      return [];
+    });
+  }
+
+  function buildIndexFromV1(items) {
+    var list = [];
+    var lastUserMsgId = null;
+    var i, j, item, info, role, parts, p, pt, text;
+    for (i = 0; i < (items ? items.length : 0); i++) {
+      item = items[i] || {};
+      info = item.info || item;
+      if (!info || !info.id) continue;
+      role = info.role || "";
+      parts = item.parts || info.parts || [];
+      text = "";
+      for (j = 0; j < parts.length; j++) {
+        p = parts[j];
+        if (!p) continue;
+        pt = "";
+        if (p.type === "text" || p.type === "reasoning") pt = p.text || "";
+        else if (p.type === "tool") pt = p.tool || (p.state && (p.state.title || p.state.name)) || "";
+        if (pt) text = text ? text + "\n" + pt : pt;
+      }
+      if (!text) text = extractText(info);
+      if (!text) continue;
+      if (role === "user") lastUserMsgId = info.id;
+      list.push({ id: info.id, role: role, text: text, navId: role === "user" ? info.id : (lastUserMsgId || info.id) });
+    }
+    return list;
+  }
+
+  /* fallback: message REST endpoint (array-of-messages) whenever used */
+  function buildIndexFromMessages(sid) {
+    var allMsgs = [];
+    var cursor = null;
+    function page() {
+      var url = apiOrigin + "/api/session/" + encodeURIComponent(sid) + "/message?limit=200&order=asc";
+      if (cursor) url += "&cursor=" + encodeURIComponent(cursor);
+      return fetchJSON(url).then(function (res) {
+        var arr = Array.isArray(res.data) ? res.data : Array.isArray(res) ? res : [];
+        allMsgs = allMsgs.concat(arr);
+        var next = res.cursor && res.cursor.next;
+        if (next && arr.length >= 200) { cursor = next; return page(); }
+      });
+    }
+    return page().then(function () {
+      var list = [];
+      var lastUserMsgId = null;
+      var i, msg, text;
+      for (i = 0; i < allMsgs.length; i++) {
+        msg = allMsgs[i];
+        text = extractText(msg);
+        var role = msg.role || msg.type || "";
+        if (role === "user") lastUserMsgId = msg.id;
+        if (text) list.push({ id: msg.id, role: role, text: text, navId: (role === "user") ? msg.id : (lastUserMsgId || msg.id) });
+      }
+      return list;
+    });
+  }
+
+  function buildIndex(sid) {
+    var cached = indexCache[sid];
+    var now = Date.now();
+    if (cached && (now - cached.builtAt) < 15000) return Promise.resolve(cached.msgs);
+    if (cached && cached.loading) return cached.loading;
+
+    var entry = { msgs: [], builtAt: 0, loading: null, src: "-" };
+    indexCache[sid] = entry;
+
+    var loadPromise = fetchV1Messages(sid).then(function (items) {
+      var list = buildIndexFromV1(items);
+      if (list.length) { entry.src = "v1:" + items.length; return list; }
+      return fetchHistory(sid).then(function (events) {
+        var l2 = rebuildIndex(events);
+        if (l2.length) { entry.src = "durable"; return l2; }
+        return buildIndexFromMessages(sid).then(function (l3) {
+          entry.src = l3.length ? "v2" : "empty";
+          return l3;
+        });
+      });
+    }).then(function (list) {
+      entry.msgs = list;
+      entry.builtAt = Date.now();
+      entry.loading = null;
+      return list;
+    }).catch(function () {
+      entry.builtAt = Date.now();
+      entry.loading = null;
+      return [];
+    });
+
+    entry.loading = loadPromise;
+    return loadPromise;
+  }
+
+  /* ========== 5. DOM scan fallback ========== */
+  function domScan(ql) {
+    var nodes = document.querySelectorAll("[data-message-id]");
+    var results = [], i, id, t, tag;
+    for (i = 0; i < nodes.length; i++) {
+      tag = nodes[i].getAttribute("data-timeline-row");
+      if (tag && tag !== "UserMessage") continue;
+      id = nodes[i].getAttribute("data-message-id");
+      t = nodes[i].textContent || "";
+      if (id && t.toLowerCase().indexOf(ql) >= 0)
+        results.push({ id: id, role: "user", text: t, navId: id });
+    }
+    var uniq = {}, out = [];
+    for (i = 0; i < results.length; i++) {
+      if (!uniq[results[i].navId]) { uniq[results[i].navId] = 1; out.push(results[i]); }
+    }
+    return out;
+  }
+
+  /* ========== 6. Non-destructive red highlight (overlay) ========== */
+  var overlayBox = null;
+  var activeRanges = [];
+  var lastNavId = null;
+  var repositionT = null;
+
+  function ensureOverlay() {
+    if (overlayBox) return;
+    overlayBox = document.createElement("div");
+    overlayBox.id = "oc-find-chat-overlay";
+    (document.body || document.documentElement).appendChild(overlayBox);
+    window.addEventListener("scroll", scheduleReposition, true);
+    window.addEventListener("resize", scheduleReposition);
+  }
+
+  function scheduleReposition() {
+    if (!activeRanges.length) return;
+    if (repositionT) return;
+    repositionT = requestAnimationFrame(function () {
+      repositionT = null;
+      paintOverlayRects();
+      positionChip(turnRows(lastNavId));
+    });
+  }
+
+  function clearOverlay() {
+    activeRanges = [];
+    if (repositionT) { cancelAnimationFrame(repositionT); repositionT = null; }
+    if (overlayBox) overlayBox.innerHTML = "";
+    if (chipEl) chipEl.style.display = "none";
+  }
+
+  function paintOverlayRects() {
+    if (!overlayBox) return;
+    overlayBox.innerHTML = "";
+    var live = [];
+    var i, j, r, rects, rc, d;
+    for (i = 0; i < activeRanges.length; i++) {
+      r = activeRanges[i];
+      if (!r.startContainer || !r.startContainer.isConnected || r.collapsed) continue;
+      rects = r.getClientRects();
+      for (j = 0; j < rects.length; j++) {
+        rc = rects[j];
+        if (rc.width <= 0.5 || rc.height <= 0.5) continue;
+        d = document.createElement("div");
+        d.className = "ocf-mark-overlay";
+        d.style.left = rc.left + "px";
+        d.style.top = rc.top + "px";
+        d.style.width = rc.width + "px";
+        d.style.height = rc.height + "px";
+        overlayBox.appendChild(d);
+      }
+      live.push(r);
+    }
+    activeRanges = live;
+  }
+
+  function drawOverlay(rowEl, ql) {
+    clearOverlay();
+    if (!rowEl || !ql) return;
+    ensureOverlay();
+    var list = (rowEl.nodeType === 1) ? [rowEl] : (rowEl || []);
+    var seen = {};
+    for (var i = 0; i < list.length; i++) {
+      var elem = list[i];
+      if (!elem || elem.nodeType !== 1 || seen[elem]) continue;
+      seen[elem] = 1;
+      var walker = document.createTreeWalker(elem, NodeFilter.SHOW_TEXT, {
+        acceptNode: function (n) {
+          var p = n.parentNode;
+          if (p && p.closest && p.closest("script,style,svg,textarea")) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      var nodes = [], n;
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      for (var j = 0; j < nodes.length; j++) {
+        n = nodes[j];
+        var txt = n.nodeValue || "";
+        var lower = txt.toLowerCase();
+        var pos = 0, idx;
+        while ((idx = lower.indexOf(ql, pos)) >= 0) {
+          var rg = document.createRange();
+          rg.setStart(n, idx);
+          rg.setEnd(n, idx + ql.length);
+          activeRanges.push(rg);
+          pos = idx + ql.length;
+        }
+      }
+    }
+    paintOverlayRects();
+  }
+
+  /* ========== 7. Navigation (single-shot, no scrolling loops) ========== */
+  function ordOf(id) { return ordMap && ordMap[id] !== undefined ? ordMap[id] : -1; }
+
+  function normText(el) {
+    return (el.textContent || "").replace(/\s+/g, " ");
+  }
+
+  function findPhraseRow(uid, ql, role) {
+    if (!uid) return null;
+    var nodes = document.querySelectorAll('[data-message-id="' + CSS.escape(String(uid)) + '"]');
+    var first = null;
+    var wantUser = role === "user";
+    var wantAssist = role && role !== "user";
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i];
+      var tag = r.getAttribute("data-timeline-row");
+      if (normText(r).toLowerCase().indexOf(ql) < 0) continue;
+      if (!first) first = r;
+      if (wantUser && tag === "UserMessage") return r;
+      if (wantAssist && tag !== "UserMessage") return r;
+    }
+    return first;
+  }
+
+  function conversationScroller() {
+    var rows = document.querySelectorAll("[data-message-id]");
+    var best = null, bestRatio = 0;
+    for (var i = 0; i < rows.length; i++) {
+      var el = rows[i].parentElement;
+      while (el && el !== document.documentElement && el !== document.body) {
+        var s = getComputedStyle(el);
+        var oy = s.overflowY;
+        if (oy === "auto" || oy === "scroll" || oy === "overlay") {
+          if (el.scrollHeight > el.clientHeight + 40) {
+            var ratio = el.scrollHeight / Math.max(1, el.clientHeight);
+            if (ratio > bestRatio) { bestRatio = ratio; best = el; }
+          }
+        }
+        el = el.parentElement;
+      }
+    }
+    return best || document.scrollingElement || document.documentElement;
+  }
+
+  function centerRangeOn(range) {
+    var cont = conversationScroller();
+    if (!cont) return;
+    var rects = range.getClientRects();
+    var r = rects && rects.length ? rects[0] : range.getBoundingClientRect();
+    var cRect = cont.getBoundingClientRect();
+    var dy = r.top - (cRect.top + (cRect.height - r.height) / 2);
+    if (Math.abs(dy) > 1) cont.scrollTop += dy;
+    requestAnimationFrame(function () {
+      if (!range.startContainer || !range.startContainer.isConnected) return;
+      var rr = range.getClientRects();
+      var r0 = rr && rr.length ? rr[0] : range.getBoundingClientRect();
+      var c2 = cont.getBoundingClientRect();
+      var d2 = r0.top - (c2.top + (c2.height - r0.height) / 2);
+      if (Math.abs(d2) > 1) cont.scrollTop += d2;
+      paintOverlayRects();
+    });
+  }
+
+  function centerOcc(occ) {
+    if (!activeRanges.length) return;
+    var i = Math.max(0, Math.min(occ | 0, activeRanges.length - 1));
+    var r = activeRanges[i] || activeRanges[0];
+    if (r) centerRangeOn(r);
+  }
+
+  function centerEl(el) {
+    if (!el) return;
+    var cont = conversationScroller();
+    if (cont) {
+      var cr = cont.getBoundingClientRect();
+      var r = el.getBoundingClientRect();
+      cont.scrollTop += r.top - (cr.top + (cr.height - r.height) / 2);
+    } else if (el.scrollIntoView) {
+      el.scrollIntoView({ block: "center" });
+    }
+    paintOverlayRects();
+  }
+
+  /* Place element's top at `anchor` (0..1) of the scroller viewport, so even
+     adjacent turns produce visible movement. */
+  function placeEl(el, anchor) {
+    if (!el) return;
+    var cont = conversationScroller();
+    if (cont) {
+      var cr = cont.getBoundingClientRect();
+      var r = el.getBoundingClientRect();
+      cont.scrollTop += r.top - (cr.top + cr.height * (anchor || 0.3));
+    } else if (el.scrollIntoView) {
+      el.scrollIntoView({ block: "start" });
+    }
+  }
+
+  /* Bridge highlight for turns whose match text isn't in the DOM (e.g. gated
+     reasoning) — outline the rendered turn so the user still SEES where it is. */
+  function drawTurnBox(rows) {
+    if (!overlayBox) ensureOverlay();
+    paintOverlayRects();
+    var seen = {}, i, r, d;
+    for (i = 0; i < rows.length; i++) {
+      var el = rows[i];
+      if (!el || el.nodeType !== 1 || seen[el]) continue;
+      seen[el] = 1;
+      r = el.getBoundingClientRect();
+      if (r.width <= 1 || r.height <= 1) continue;
+      d = document.createElement("div");
+      d.className = "ocf-mark-turn";
+      d.style.left = r.left + "px";
+      d.style.top = r.top + "px";
+      d.style.width = r.width + "px";
+      d.style.height = r.height + "px";
+      overlayBox.appendChild(d);
+    }
+  }
+
+  function turnHasText(rows, ql) {
+    for (var i = 0; i < rows.length; i++) {
+      var t = (rows[i].textContent || "").toLowerCase();
+      if (t.indexOf(ql) >= 0) return true;
+    }
+    return false;
+  }
+
+  /* ========== snippet chip: shows the match even when its part (e.g.
+       reasoning) is not rendered in the DOM ========== */
+  var chipEl = null;
+  function makeChip() {
+    if (chipEl) return;
+    chipEl = document.createElement("div");
+    chipEl.id = "oc-find-chip";
+    chipEl.style.display = "none";
+    (document.body || document.documentElement).appendChild(chipEl);
+  }
+
+  function snippetFor(entry, ql) {
+    var t = entry.text || "";
+    var low = t.toLowerCase();
+    var pos = 0, i = 0, occ = entry.occ | 0;
+    while (i < occ) {
+      var p = low.indexOf(ql, pos);
+      if (p < 0) break;
+      pos = p + ql.length; i++;
+    }
+    var idx = low.indexOf(ql, pos);
+    if (idx < 0) idx = low.indexOf(ql);
+    if (idx < 0) return null;
+    var a = Math.max(0, idx - 46);
+    var b = Math.min(t.length, idx + ql.length + 46);
+    var pre = a > 0 ? "\u2026" : "";
+    var suf = b < t.length ? "\u2026" : "";
+    var mid = t.slice(a, b).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    var coreA = idx - a;
+    var head = mid.slice(0, coreA);
+    var core = mid.slice(coreA, coreA + ql.length);
+    var tail = mid.slice(coreA + ql.length);
+    return pre + '<span class="ocf-match">' + core + "</span>" + tail + suf;
+  }
+
+  function positionChip(rows) {
+    if (!chipEl || chipEl.style.display === "none") return;
+    var vh = window.innerHeight || 800;
+    var anchor = null;
+    for (var i = 0; i < rows.length; i++) {
+      var rc = rows[i].getBoundingClientRect();
+      if (rc.height > 0) anchor = rc;
+    }
+    if (!anchor) {
+      var cont = conversationScroller();
+      if (cont) {
+        var cr = cont.getBoundingClientRect();
+        if (cr && cr.height > 0) anchor = { top: cr.top + 10, bottom: cr.top + 10, height: 1 };
+      }
+    }
+    if (!anchor) return;
+    chipEl.style.maxWidth = "min(560px, calc(100vw - 24px))";
+    chipEl.style.left = "12px";
+    chipEl.style.right = "auto";
+    var top = Math.min(Math.max(8, anchor.bottom + 6), vh - (chipEl.offsetHeight || 48) - 8);
+    chipEl.style.top = top + "px";
+  }
+
+  function drawSnippetChip(rows, entry, ql) {
+    makeChip();
+    var s = snippetFor(entry, ql);
+    if (!s) { chipEl.style.display = "none"; return; }
+    chipEl.innerHTML = '<div dir="rtl">' + s + "</div>";
+    chipEl.style.display = "block";
+    positionChip(rows);
+  }
+
+  function turnRows(navId) {
+    if (!navId) return [];
+    var els = document.querySelectorAll('[data-message-id="' + CSS.escape(String(navId)) + '"]');
+    var out = [];
+    for (var i = 0; i < els.length; i++) if (els[i] && els[i].nodeType === 1) out.push(els[i]);
+    return out;
+  }
+
+  function diagNav(navId, occ, ok, tries, extra) {
+    try {
+      diagSend("diag: nav id=" + String(navId).slice(0, 20) + " occ=" + occ + " ok=" + (ok ? 1 : 0) + " tries=" + (tries || 0) +
+        " ord=" + ordOf(navId) + " turns=" + turnRows(navId).length +
+        " ranges=" + activeRanges.length + (extra ? (" " + extra) : ""));
+    } catch (e) {}
+  }
+
+  function navTo(entry) {
+    if (!entry) return;
+    clearOverlay();
+    var navId = entry.navId || entry.id;
+    if (!navId) return;
+    var ql = cleanQuery().toLowerCase();
+    if (!ql) return;
+    var occ = (typeof entry.occ === "number") ? entry.occ : 0;
+    var token = ++navToken;
+
+    /* Turn already mounted in the DOM -> highlight its ENTIRE rendered
+       content and center the target occurrence (best-effort). */
+    var rows = turnRows(navId);
+    if (rows.length) {
+      lastNavId = navId;
+      drawOverlay(rows, ql);
+      if (activeRanges.length) {
+        placeEl(rows[0], 0.3);
+        var idx = Math.max(0, Math.min(occ, activeRanges.length - 1));
+        centerRangeOn(activeRanges[idx]);
+        if (occ >= activeRanges.length) drawSnippetChip(rows, entry, ql);
+      } else {
+        placeEl(rows[0], 0.3);
+        drawTurnBox(rows);
+        drawSnippetChip(rows, entry, ql);
+      }
+      diagNav(navId, occ, true, 0, "mounted" + (activeRanges.length ? "" : " noRange has=" + (turnHasText(rows, ql) ? 1 : 0)));
+      return;
+    }
+    /* Turn not mounted yet -> bisection scroll until it mounts. */
+    driveTo(navId, ql, occ, token, entry);
+  }
+
+  /* PREFERRED: app-native reveal via __ocNav.setPendingMessage(id).
+     This drives the app's OWN loader (loadMore until the message exists in
+     store) then its scrollToMessage/seek -> row mounts and centers. No raw
+     scrollTop fighting, no anchor pull-back. */
+  function driveTo(navId, ql, occ, token, entry) {
+    var bridge = window.__ocNav;
+    if (!(bridge && typeof bridge.setPendingMessage === "function")) {
+      driveToLegacy(navId, ql, occ, token, entry);
+      return;
+    }
+    try { bridge.setPendingMessage(navId); } catch (e) {
+      driveToLegacy(navId, ql, occ, token, entry);
+      return;
+    }
+    var waited = 0;
+    (function pendingWait() {
+      if (token !== navToken) return;
+      waited++;
+      var rows = turnRows(navId);
+      if (rows.length) {
+        lastNavId = navId;
+        drawOverlay(rows, ql);
+        if (activeRanges.length) {
+          placeEl(rows[0], 0.4);
+          var idx = Math.max(0, Math.min(occ, activeRanges.length - 1));
+          centerRangeOn(activeRanges[idx]);
+          if (occ >= activeRanges.length) drawSnippetChip(rows, entry, ql);
+        } else {
+          placeEl(rows[0], 0.4);
+          drawTurnBox(rows);
+          drawSnippetChip(rows, entry, ql);
+        }
+        diagNav(navId, occ, true, waited, "pending wait=" + waited + " rows=" + rows.length + (activeRanges.length ? "" : " noRange has=" + (turnHasText(rows, ql) ? 1 : 0)));
+        return;
+      }
+      var done = false, reason = "";
+      try {
+        if (bridge.currentMessageId() === navId) { done = true; reason = "consumed"; }
+        else if (!bridge.historyMore() && waited >= 2) { done = true; reason = "exhausted"; }
+      } catch (e) { done = false; }
+      if (done && waited >= 2) {
+        drawOverlay([], ql);
+        drawSnippetChip([], entry, ql);
+        diagNav(navId, occ, true, waited, "pending " + reason + " noRow rows=" + rows.length);
+        return;
+      }
+      if (waited > 80) {
+        drawOverlay([], ql);
+        drawSnippetChip([], entry, ql);
+        diagNav(navId, occ, false, waited, "pending-timeout");
+        return;
+      }
+      setTimeout(pendingWait, 120);
+    })();
+  }
+
+  /* ordinal-aware scroll convergence with a direct first jump. No hash. */
+  function knownOrdCount() {
+    var max = -1, k;
+    for (k in ordMap) { if (ordMap[k] >= 0 && ordMap[k] > max) max = ordMap[k]; }
+    return max + 1;
+  }
+
+  function driveToLegacy(navId, ql, occ, token, entry) {
+    var cont = conversationScroller();
+    if (!cont) return;
+    var tOrd = ordOf(navId);
+    var total = knownOrdCount();
+    var tries = 0, last = -1, same = 0;
+
+    function estimate(maxTop) {
+      return (tOrd >= 0 && total > 1) ? Math.max(0, Math.min(maxTop, Math.round(maxTop * (tOrd / (total - 1))))) : -1;
+    }
+
+    function land() {
+      var rows = turnRows(navId);
+      if (!rows.length) return false;
+      lastNavId = navId;
+      drawOverlay(rows, ql);
+      if (activeRanges.length) {
+        placeEl(rows[0], 0.3);
+        var idx = Math.max(0, Math.min(occ, activeRanges.length - 1));
+        centerRangeOn(activeRanges[idx]);
+        if (occ >= activeRanges.length) drawSnippetChip(rows, entry, ql);
+      } else {
+        placeEl(rows[0], 0.3);
+        drawTurnBox(rows);
+        drawSnippetChip(rows, entry, ql);
+      }
+      diagNav(navId, occ, true, tries, "drive rows=" + rows.length + (activeRanges.length ? "" : " noRange has=" + (turnHasText(rows, ql) ? 1 : 0)));
+      return true;
+    }
+
+    /* A turn that has NO DOM rows (e.g. its only match lives in the gated
+       reasoning) can never be mounted — walking towards it forever is what
+       caused the up/down stutter. Instead we position the viewport at its
+       estimated spot and pin the snippet chip there. */
+    function proxyLand(reason, move) {
+      var maxTop = Math.max(1, cont.scrollHeight - cont.clientHeight);
+      var est = estimate(maxTop);
+      if (move !== false && est >= 0) {
+        var target = est - Math.round(cont.clientHeight * 0.3);
+        cont.scrollTop = Math.max(0, target);
+      }
+      lastNavId = navId;
+      drawOverlay([], ql);
+      drawSnippetChip([], entry, ql);
+      diagNav(navId, occ, true, tries, "proxy " + reason + (est >= 0 ? " est=" + est : ""));
+    }
+
+    /* 0) Already inside the visible region yet no row -> unrenderable turn.
+       Stop right here; no scroll storm. */
+    var info0 = visibleOrdRange(cont);
+    if (info0 && tOrd >= 0 && tOrd >= info0.minOrd && tOrd <= info0.maxOrd) {
+      proxyLand("inview", false);
+      return;
+    }
+
+    /* 1) Far target: one decisive proportional jump (mountable turns mount
+       right here), then a SHORT monotonic walk, then capped give-up. */
+    var maxTop0 = Math.max(1, cont.scrollHeight - cont.clientHeight);
+    var est0 = estimate(maxTop0);
+    if (est0 >= 0) {
+      /* aim slightly above the estimate so the turn lands mid viewport */
+      cont.scrollTop = Math.max(0, est0 - Math.round(cont.clientHeight * 0.3));
+    }
+
+    function stepTo(target) {
+      var top = cont.scrollTop;
+      var maxStep = Math.max(30, Math.round(cont.clientHeight * 0.35));
+      var d = target - top;
+      var next = (Math.abs(d) <= maxStep) ? target : top + (d > 0 ? maxStep : -maxStep);
+      var maxTop = Math.max(1, cont.scrollHeight - cont.clientHeight);
+      next = Math.max(0, Math.min(maxTop, Math.round(next)));
+      if (next !== top) { cont.scrollTop = next; return true; }
+      return false;
+    }
+
+    function tick() {
+      var maxTop = Math.max(1, cont.scrollHeight - cont.clientHeight);
+      if (token !== navToken) return;
+      tries++;
+      if (land()) return;
+      if (tries > 14) { proxyLand("cap"); return; }
+
+      var top = cont.scrollTop;
+      if (top === last) same++;
+      else same = 0;
+      last = top;
+
+      var est = estimate(maxTop);
+      var moved = est >= 0 ? stepTo(est) : stepTo(top + cont.clientHeight * 0.4);
+      if (!moved && same >= 5) { proxyLand("clamp"); return; }
+      requestAnimationFrame(tick);
+    }
+    setTimeout(tick, 40);
+  }
+
+  function visibleOrdRange(cont) {
+    var nodes = document.querySelectorAll("[data-message-id]");
+    var minOrd = null, maxOrd = null, i, o;
+    for (i = 0; i < nodes.length; i++) {
+      if (cont && !cont.contains(nodes[i])) continue;
+      o = ordOf(nodes[i].getAttribute("data-message-id"));
+      if (o < 0) continue;
+      if (minOrd === null || o < minOrd) minOrd = o;
+      if (maxOrd === null || o > maxOrd) maxOrd = o;
+    }
+    if (minOrd === null) return null;
+    return {
+      minOrd: minOrd,
+      maxOrd: maxOrd,
+      canGoUp: cont ? cont.scrollTop > 8 : true,
+      canGoDown: cont ? (cont.scrollTop + cont.clientHeight < cont.scrollHeight - 8) : true
+    };
+  }
+
+  /* ========== 8. Status helpers ========== */
+  function setMsg(t) { msgEl.textContent = t; msgEl.style.display = t ? "" : "none"; }
+  function setCount(t) { countEl.textContent = t; countEl.style.display = t ? "" : "none"; }
+
+  function updateStatus() {
+    var q = input.value.trim();
+    if (!q) { setCount(""); setMsg(""); prevBtn.disabled = true; nextBtn.disabled = true; return; }
+    if (!hits.length) { setCount(""); prevBtn.disabled = true; nextBtn.disabled = true; setMsg(q ? "No matches found" : ""); return; }
+    if (current >= 0) {
+      setCount((current + 1) + "/" + hits.length);
+      setMsg("");
+      prevBtn.disabled = current <= 0;
+      nextBtn.disabled = current >= hits.length - 1;
+    } else {
+      setCount(String(hits.length));
+      setMsg("");
+      prevBtn.disabled = false;
+      nextBtn.disabled = false;
+    }
+  }
+
+  function gotoIdx(i) {
+    if (!hits.length) { current = -1; updateStatus(); return; }
+    current = ((i % hits.length) + hits.length) % hits.length;
+    navTo(hits[current]);
+    updateStatus();
+  }
+
+  function step(d) {
+    if (!hits.length) { doSearch(); return; }
+    if (current < 0) gotoIdx(d > 0 ? 0 : hits.length - 1);
+    else gotoIdx(current + d);
+  }
+
+  /* ========== 9. Search ========== */
+  function cleanQuery() {
+    return input.value.replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "").trim();
+  }
+
+  function doSearch() {
+    navToken++;
+    clearOverlay();
+    hits = [];
+    current = -1;
+    ordMap = null;
+    var q = cleanQuery();
+    if (!q) { updateStatus(); return; }
+    var ql = q.toLowerCase();
+    var sid = sessionId();
+    lastSearchHadApi = !!(sid && apiOrigin && apiAuth);
+
+    if (sid && apiOrigin && apiAuth) {
+      setMsg("Searching\u2026");
+      buildIndex(sid).then(function (idx) {
+        if (cleanQuery() !== q) return;
+        ordMap = {};
+        for (var i = 0; i < idx.length; i++) {
+          ordMap[idx[i].id] = i;
+          if (idx[i].navId) ordMap[idx[i].navId] = i;
+        }
+        var all = [];
+        for (var k = 0; k < idx.length; k++) {
+          var m = idx[k];
+          if (m.role !== "user") continue;
+          var hay = m.text.toLowerCase();
+          var occ = 0, pos = 0;
+          while ((pos = hay.indexOf(ql, pos)) >= 0) {
+            all.push({ id: m.id, role: m.role, text: m.text, navId: m.navId, occ: occ });
+            occ++;
+            pos += ql.length;
+          }
+        }
+        /* every occurrence is a stop; navId locates its turn in the DOM */
+        hits = all;
+        if (!hits.length) hits = domScan(ql);
+        setMsg("");
+        updateStatus();
+        if (hits.length) gotoIdx(hits.length - 1);
+      }, function () {
+        hits = domScan(ql);
+        setMsg("");
+        updateStatus();
+        if (hits.length) gotoIdx(hits.length - 1);
+      });
+    } else {
+      hits = domScan(ql);
+      setMsg("");
+      updateStatus();
+      if (hits.length) gotoIdx(hits.length - 1);
+    }
+  }
+
+  /* ========== 10. Mounting into visible header ========== */
+  function visibleSessionTitle() {
+    var all = document.querySelectorAll("[data-session-title]");
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return all[i];
+    }
+    return all[0] || null;
+  }
+
+  var _mountT = 0;
+  function toolbarRect(h) {
+    var el = h, best = null;
+    for (var guard = 0; el && el !== document.body && el !== document.documentElement && guard < 10; guard++, el = el.parentElement) {
+      var r = el.getBoundingClientRect();
+      if (!(r.height > 0)) continue;
+      if (r.height > 0 && r.height < 90 && r.width > 60 && r.width < 3000) {
+        if (!best || r.width >= best.r.width) best = { r: { top: r.top, left: r.left, width: r.width, height: r.height } };
+        if (r.height < 70 && r.width > 320) break;
+      }
+    }
+    return best ? best.r : null;
+  }
+
+  function mount() {
+    if (!document.body) return;
+    var now = Date.now();
+    if (now - _mountT < 300) return;
+    _mountT = now;
+    var top = 10;
+    var left = null;
+    var h = visibleSessionTitle();
+    if (h) {
+      var tr = toolbarRect(h);
+      if (tr) { top = tr.top + (tr.height - 30) / 2; left = tr.left + tr.width / 2; }
+    }
+    box.style.top = top + "px";
+    box.style.left = (left === null ? "50%" : left + "px");
+    box.style.transform = left === null ? "translateX(-50%)" : "translate(-50%,-50%)";
+    if (box.parentNode !== document.body) {
+      if (box.parentNode) box.parentNode.removeChild(box);
+      (document.body || document.documentElement).appendChild(box);
+    }
+  }
+
+  /* Box is hidden until the chat is loaded AND has at least one message.
+     New/empty sessions (nothing typed yet) must not show it. */
+  var boxVisible = false;
+  function chatHasContent() {
+    return document.querySelectorAll("[data-message-id]").length > 0;
+  }
+  function refreshVisibility() {
+    var show = !!sessionId() && chatHasContent();
+    if (show === boxVisible) return;
+    boxVisible = show;
+    if (show) {
+      box.style.display = "";
+      mount();
+    } else {
+      box.style.display = "none";
+      clearOverlay();
+    }
+  }
+
+  /* ========== 11. Events ========== */
+  var searchTimer = null;
+  function scheduleSearch(delay) {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(doSearch, delay);
+  }
+
+  input.addEventListener("input", function () {
+    current = -1;
+    scheduleSearch(250);
+  });
+
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      step(e.shiftKey ? -1 : 1);
+    } else if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
+    else if (e.key === "Escape") { e.preventDefault(); input.blur(); }
+  });
+
+  prevBtn.addEventListener("click", function () { step(-1); });
+  nextBtn.addEventListener("click", function () { step(1); });
+  clearBtn.addEventListener("click", function () {
+    navToken++;
+    input.value = "";
+    hits = [];
+    current = -1;
+    clearOverlay();
+    updateStatus();
+    input.focus();
+  });
+
+  /* keep box positioned on DOM changes (header re-renders), no re-search here */
+  var obs = new MutationObserver(function () {
+    mount();
+    refreshVisibility();
+  });
+  obs.observe(document.documentElement, { childList: true, subtree: true });
+
+  /* watch for route changes (pushState / hash / popstate) + tab switches */
+  var lastRoute = sessionRoute();
+  var lastSid = sessionId();
+  function sessionRoute() { return window.location.pathname + window.location.hash; }
+  function resetForNewSession() {
+    navToken++;
+    clearOverlay();
+    hits = []; current = -1;
+    indexCache = {};
+    lastSearchHadApi = false;
+    input.value = "";
+    updateStatus();
+    refreshVisibility();
+  }
+  function handleSessionChange() {
+    var changed = false;
+    var s = sessionId();
+    if (s && s !== lastSid) { lastSid = s; changed = true; }
+    var r = sessionRoute();
+    if (r !== lastRoute) { lastRoute = r; changed = true; }
+    if (changed) {
+      resetForNewSession();
+      if (input.value.trim()) scheduleSearch(300);
+    }
+  }
+  var pushOrig2 = window.history.pushState;
+  window.history.pushState = function () {
+    pushOrig2.apply(this, arguments);
+    handleSessionChange();
+  };
+  window.addEventListener("popstate", handleSessionChange);
+  window.addEventListener("hashchange", handleSessionChange);
+
+  /* keepalive: re-position, warm the whole-chat index, catch tab switches */
+  setInterval(function () {
+    mount();
+    refreshVisibility();
+    var s = sessionId();
+    if (s && s !== lastSid) {
+      lastSid = s;
+      resetForNewSession();
+      if (input.value.trim()) scheduleSearch(300);
+    }
+    if (s && apiOrigin && apiAuth && document.querySelector("[data-session-title]")) {
+      (function (sidNow) {
+        buildIndex(sidNow).then(function (idx) {
+          if (idx.length && input.value.trim() && !hits.length && !lastSearchHadApi) {
+            lastSearchHadApi = true;
+            scheduleSearch(120);
+          }
+        }).catch(function () {});
+      })(s);
+    }
+  }, 1500);
+
+  /* ========== 11b. DIAGNOSTIC probe (temporary) ========== */
+  function diagSend(text) {
+    try { console.log(text); } catch (_e) {}
+    try {
+      (origFetch || window.fetch)("http://127.0.0.1:48001/ocdiag", { method: "POST", mode: "no-cors", keepalive: true, body: text });
+    } catch (_e) {}
+  }
+  (function diag() {
+    var lg = [];
+    lg.push("diag: window.api=" + (!!window.api) + " preloadFn=" + (!!window.api && typeof window.api.awaitInitialization === "function"));
+    lg.push("diag: bootPath=" + window.location.pathname + " bootHash=" + window.location.hash);
+    var diagQ = "پلاگین";
+    var triesDiag = 0;
+
+    function reportAll(s) {
+      lg.push("diag: sid=" + s + " src=" + (lastSidSource || "-"));
+      var titleEls = document.querySelectorAll("[data-session-title]");
+      lg.push("diag: titleEls=" + titleEls.length);
+      var rowR = null;
+      for (var ti = 0; ti < titleEls.length && ti < 2; ti++) {
+        var tr = titleEls[ti].getBoundingClientRect();
+        lg.push("diag: title" + ti + " top=" + Math.round(tr.top) + " h=" + Math.round(tr.height) + " w=" + Math.round(tr.width) + " left=" + Math.round(tr.left));
+        if (!rowR) rowR = toolbarRect(titleEls[ti]);
+      }
+      if (rowR) lg.push("diag: toolbar top=" + Math.round(rowR.top) + " left=" + Math.round(rowR.left) + " w=" + Math.round(rowR.width) + " h=" + Math.round(rowR.height));
+      var bx = document.querySelector("#oc-find-chat-box");
+      if (bx) { var br = bx.getBoundingClientRect(); lg.push("diag: box top=" + Math.round(br.top) + " cx=" + Math.round(br.left + br.width / 2) + " w=" + Math.round(br.width)); }
+      lg.push("diag: mountedRows=" + document.querySelectorAll("[data-message-id]").length);
+      diagSend(lg.join(" | "));
+
+      (origFetch || window.fetch)(apiOrigin + "/api/session/" + encodeURIComponent(s) + "/history?limit=5&after=0", {
+        headers: { Authorization: apiAuth }
+      }).then(function (r) {
+        return r.json().then(function (j) {
+          var ev0 = j && j.data && j.data[0];
+          diagSend("diag: historyHttp=" + r.status + " len=" + (j && j.data ? j.data.length : "-") + " hasMore=" + (j && j.hasMore) + " ev0Type=" + (ev0 && ev0.type) + " ev0Seq=" + (ev0 && ev0.seq) + " ev0Keys=" + (ev0 ? Object.keys(ev0).join(",") : "-"));
+        });
+      }).catch(function (e) { diagSend("diag: historyErr " + (e && e.message)); });
+
+      (origFetch || window.fetch)(apiOrigin + "/session/" + encodeURIComponent(s) + "/message", {
+        headers: { Authorization: apiAuth }
+      }).then(function (r) {
+        return r.text().then(function (tx) {
+          var n = -1, roles = "";
+          try {
+            var j = JSON.parse(tx);
+            var arr = Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
+            n = arr.length;
+            roles = arr.slice(0, 3).map(function (it) { return (it && it.info && it.info.role) || "?"; }).join(",");
+          } catch (_e3) {}
+          diagSend("diag: v1Http=" + r.status + " v1Len=" + n + " roles=" + roles + " body=" + tx.slice(0, 120));
+        });
+      }).catch(function (e) { diagSend("diag: v1Err " + (e && e.message)); });
+
+      buildIndex(s).then(function (idx) {
+        var cnt = 0, cntU = 0, cntA = 0, i2, hay2, pp2;
+        for (i2 = 0; i2 < idx.length; i2++) {
+          hay2 = (idx[i2].text || "").toLowerCase();
+          pp2 = 0;
+          while ((pp2 = hay2.indexOf(diagQ, pp2)) >= 0) {
+            cnt++;
+            if (idx[i2].role === "user") cntU++; else cntA++;
+            pp2 += diagQ.length;
+          }
+        }
+        diagSend("diag: idxSrc=" + ((indexCache[s] && indexCache[s].src) || "-") + " idxMsgs=" + idx.length + " totalMatches(" + diagQ + ")=" + cnt + " user=" + cntU + " assistant=" + cntA);
+      }).catch(function (e) { diagSend("diag: idxErr " + (e && e.message)); });
+
+      (origFetch || window.fetch)(apiOrigin + "/api/session/" + encodeURIComponent(s) + "/message?limit=200&order=asc", {
+        headers: { Authorization: apiAuth }
+      }).then(function (r) {
+        return r.text().then(function (tx) {
+          var n = -1;
+          try { var j = JSON.parse(tx); n = Array.isArray(j.data) ? j.data.length : -1; } catch (_e2) {}
+          diagSend("diag: messageHttp=" + r.status + " messageDataLen=" + n + " body=" + tx.slice(0, 140));
+        });
+      }).catch(function (e) { diagSend("diag: messageErr " + (e && e.message)); });
+    }
+
+    (function wait() {
+      triesDiag++;
+      var s = sessionId();
+      lg.push("diag: poll" + triesDiag + " path=" + window.location.pathname + " sid=" + s + " (" + (lastSidSource || "-") + ") origin=" + (apiOrigin || "-"));
+      if (s && s !== "null" && apiOrigin && apiAuth) { reportAll(s); return; }
+      if (triesDiag > 40) { diagSend(lg.join(" | diag: timeout")); return; }
+      if (s && s !== "null" && (!apiOrigin || !apiAuth)) { tryPreload().catch(function () {}); }
+      setTimeout(wait, 1500);
+    })();
+  })();
+
+  /* ========== 12. Boot ========== */
+  function boot() {
+    (document.head || document.documentElement).appendChild(style);
+    box.style.display = "none";
+    updateStatus();
+    mount();
+    refreshVisibility();
+    tryPreload().catch(tryFetchIntercept);
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+  else boot();
+})();
+</script>

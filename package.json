@@ -1,0 +1,28 @@
+{
+  "name": "searchbox-opencode",
+  "version": "1.0.0",
+  "description": "Search-in-your-prompts box for OpenCode Desktop: Ctrl+F inside a chat, user-prompt-only results with a live count, keyboard/button navigation between matches, and pen-drop scrolling bridged to the app's native loader.",
+  "private": false,
+  "type": "module",
+  "license": "MIT",
+  "author": {
+    "name": "Sina Khanzadeh",
+    "email": "khanzadeh.1377@gmail.com",
+    "url": "https://sina-khanzadeh.ir"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-desktop",
+    "find-in-chat",
+    "chat-search",
+    "electron",
+    "asar"
+  ],
+  "scripts": {
+    "patch": "node patch/patch-asar.mjs",
+    "rebuild": "node patch/patch-asar.mjs --out /tmp/app.asar.new"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}
