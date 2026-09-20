@@ -4,6 +4,24 @@ All notable behavior changes of the SearchBox patch. Versions below are the
 internal iteration numbers used while developing against OpenCode Desktop
 build 11831 (`app-11831-vNN.asar`); the public project starts at **1.0.0**.
 
+## [1.0.1] – 2026-09-20
+
+Sync with OpenCode Desktop **2.0.11**:
+
+- The native navigation chain (`pendingMessage → loadMore → scrollToMessage`)
+  moved from the main bundle into a lazily-loaded `route-*.js` chunk with
+  minified names. `patch-asar.mjs` now parses the identifiers out of the
+  matched `Ck({...})` call and injects the `window.__ocNav` bridge there, so
+  pen-drop navigation keeps riding the app's own loader/reveal pipeline.
+- Build 11831 (`main-*.js` anchor) is still patched the old way.
+- When neither anchor is recognized the bridge is skipped with a warning and
+  the search UI still installs standalone (REST index + DOM scan + legacy
+  scroll) instead of aborting.
+- Verified on 2.0.11: `[data-message-id]` / `UserMessage` rows,
+  `[data-session-title]`, and the `/session/:id/message`,
+  `/api/session/:id/history`, `/api/session/:id/message` endpoints are
+  all still present.
+
 ## [1.0.0] – 2026-09-18
 
 Public release. Everything is bundled as a zero-dependency, cross-platform

@@ -63,7 +63,13 @@ Inside a loaded chat it:
 
 The injection is guarded by the marker `opencode-find-chat-patch`, so re‑running the patch never double‑injects.
 
-### 2. `out/renderer/assets/main-<hash>.js` — the navigation bridge
+### 2. `out/renderer/assets/main-<hash>.js` — the navigation bridge (build 11831)
+
+On build 11831 the bridge (`window.__ocNav`) is appended right after the app's *pending‑message* effect (`consumePendingMessage: layout.pendingMessage.consume`), i.e. at the top of the **provider scope**, where the app's own helpers are still in scope.
+
+### 2b. `out/renderer/assets/route-<hash>.js` — the navigation bridge (build 2.x)
+
+On build **2.0.11** the same chain (`pendingMessage → loadMore → scrollToMessage`) lives in a lazily‑loaded route chunk as `{clearMessageHash, scrollToMessage} = Ck({...})`. Minified names shift per build, so the patch parses the identifiers out of the matched call and injects the bridge as one more declarator right after it. Same `window.__ocNav` API, same native "dance" — nothing re‑implemented.
 
 OpenCode Desktop's renderer bundle is compiled minified, so it cannot be patched "cleanly" by reading source. Instead, the patch appends a small **bridge** (`window.__ocNav`) right after the app's *pending‑message* effect (`consumePendingMessage: layout.pendingMessage.consume`), i.e. at the top of the **provider scope**, where the app's own helpers are still in scope.
 
@@ -109,12 +115,12 @@ After the edits `patch-asar.mjs`:
 
 | Thing | Requirement |
 |---|---|
-| OpenCode Desktop | any current build; **compatibility anchor tested on build 11831** |
+| OpenCode Desktop | any current build; compatibility anchors tested on build **11831** (`main-*.js`) and **2.0.11** (`route-*.js`) |
 | Node.js | **≥ 22.12.0** (needed only during install, not at runtime) |
 | OS | Linux, macOS, Windows |
 | Permission | sudo (Linux/macOS) or Administrator (Windows) — only for the final file copy |
 
-If your OpenCode build is **newer/older** and the internal anchor changed, `patch-asar.mjs` aborts with a clear "provider anchor not found" message instead of corrupting anything. That build is safe — just not yet compatible.
+If your OpenCode build has **neither** anchor, `patch-asar.mjs` warns and installs the search UI standalone (REST index + DOM scan + legacy scroll) instead of corrupting anything. Open an issue with your app/version — the anchor is a small constant.
 
 ---
 
@@ -229,7 +235,7 @@ A desktop app update overwrites `app.asar` and also makes the old backup stale. 
 | Box does not appear | By design it only shows for a chat that is loaded **and has messages**. Open a chat with content (or switch tabs). |
 | "0 matches" for a phrase you are sure about | Searching user prompts only — the phrase must be inside one of *your* messages, not a model reply. |
 | Navigate shows a "gated" chip | The match is a reasoning‑gated turn OpenCode will not render as a row; the closest renderable row/position is used. |
-| "provider anchor not found" during install | Your OpenCode build differs from the tested 11831. Open an issue with your app/version — the anchor is a one‑line constant. |
+| "provider anchor not found" / "route anchor not recognized" during install | Your OpenCode build has neither the 11831 nor the 2.x anchor. The search UI still installs (standalone mode: REST index + legacy scroll, no native pen‑drop). Open an issue with your app/version — the anchor is a small constant. |
 | "already patched (marker found)" | Safe: re‑runs are idempotent, nothing double‑injects. |
 | macOS: app won't launch after patch | Code signature invalidated → re‑sign with `codesign --force --deep --sign - /Applications/OpenCode.app`. |
 | Windows: antivirus blocks the copy | Add an exclusion for the OpenCode install dir; the archive is only ever written, never executed. |
@@ -263,7 +269,7 @@ SearchBox_OpenCode/
 
 ## Compatibility & safety
 
-- **Tested on:** OpenCode Desktop build **11831**, Linux (Electron). The macOS/Windows installers ship the same schema with per‑OS paths and are not hardware‑tested by the author yet.
+- **Tested on:** OpenCode Desktop build **11831** (`main-*.js` bridge) and **2.0.11** (`route-*.js` bridge), Linux (Electron). The macOS/Windows installers ship the same schema with per‑OS paths and are not hardware‑tested by the author yet.
 - The patch is **marker‑guarded and idempotent** — running it twice is safe and produces an identical archive.
 - The original `app.asar` is **always backed up** before the first patch.
 - It is an **unofficial patch**: you patch at your own risk, keep backups, and report issues upstream honestly — this is a consumer tool, not affiliated with OpenCode.

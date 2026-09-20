@@ -1,6 +1,6 @@
 {
   "name": "searchbox-opencode",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Search-in-your-prompts box for OpenCode Desktop: Ctrl+F inside a chat, user-prompt-only results with a live count, keyboard/button navigation between matches, and pen-drop scrolling bridged to the app's native loader.",
   "private": false,
   "type": "module",
